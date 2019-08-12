@@ -68,6 +68,10 @@ namespace CivOne.Tiles
 			return null;
 		}
 		
+        /// <summary>
+        /// The surrounding tiles for "this", excluding "this"
+        /// </summary>
+        /// <param name="tile"></param>
 		public static IEnumerable<ITile> GetBorderTiles(this ITile tile)
 		{
 			for (int relY = -1; relY <= 1; relY++)
@@ -79,16 +83,16 @@ namespace CivOne.Tiles
 			}
 		}
 
+        /// <summary>
+        /// The 'cross' tiles for "this": the 4 tiles immediately up/down, left/right
+        /// </summary>
+        /// <param name="tile"></param>
 		public static IEnumerable<ITile> CrossTiles(this ITile tile)
-		{
-			for (int relY = -1; relY <= 1; relY++)
-			for (int relX = -1; relX <= 1; relX++)
-			{
-				if (relX == 0 && relY == 0) continue;
-				if (relX != 0 && relY != 0) continue;
-				if (tile[relX, relY] == null) continue;
-				yield return tile[relX, relY];
-			}
+        {
+            yield return tile[-1, 0];
+            yield return tile[0, +1];
+            yield return tile[+1, 0];
+            yield return tile[0, -1];
 		}
 
         private static Direction BorderRoads(this ITile tile)
@@ -129,19 +133,53 @@ namespace CivOne.Tiles
             return !tile.RailRoad ? Direction.None : BorderRailRoads(tile);
         }
 
+        public static bool TerrainAllowsIrrigation(this ITile tile)
+        {
+            // This terrain can be improved [NOT changed] when irrigation applied
+            // TODO should be property of tile
+            switch (tile.Type)
+            {
+                case Terrain.Mountains:
+                case Terrain.Ocean:
+                case Terrain.Arctic:
+                case Terrain.Tundra:
+                case Terrain.Forest: 
+                case Terrain.Jungle: 
+                case Terrain.Swamp:
+                    return false;
+                default:
+                    return true;
+            }
+        }
+
 		public static bool AllowIrrigation(this ITile tile)
 		{
-			if (tile.Irrigation) return false;
-            // TODO fire-eggs: this should be a flag in ITile
-			if (!(tile is Desert || tile is Grassland || tile is Hills || tile is Plains || tile is River)) return false;
-			return (CrossTiles(tile).Any(x => x.Irrigation || x is River || x is Ocean));
+			if (tile.Irrigation) 
+                return false;
+            // TODO fire-eggs: this should be a flag in ITile or Terrain
+            switch (tile.Type)
+            {
+                case Terrain.Desert:
+                case Terrain.Grassland1:
+                case Terrain.Grassland2:
+                case Terrain.Hills:
+                case Terrain.Plains:
+                case Terrain.River:
+                    break;
+                default:
+                    return false;
+            }
+			//if (!(tile is Desert || tile is Grassland || tile is Hills || tile is Plains || tile is River)) return false;
+            // fire-eggs 20190810 irrigation is NOT allowed e.g. to left of city
+			return (CrossTiles(tile).Any(x => (x.Irrigation || x.Type == Terrain.River || x.IsOcean) && !x.HasCity));
 		}
 
-		public static bool AllowChangeTerrain(this ITile tile)
+		public static bool IrrigationChangesTerrain(this ITile tile)
 		{
-            // TODO fire-eggs: this should be a flag in ITile
-			return (tile is Forest || tile is Jungle || tile is Swamp);
-		}
+            // TODO fire-eggs: this should be a flag in ITile or Terrain
+			//return (tile is Forest || tile is Jungle || tile is Swamp);
+            return tile.Type == Terrain.Forest || tile.Type == Terrain.Jungle || tile.Type == Terrain.Swamp;
+        }
 
 		public static IBitmap ToBitmap(this ITile[,] tiles, TileSettings settings = null, Player player = null)
 		{

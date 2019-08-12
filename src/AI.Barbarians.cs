@@ -194,9 +194,11 @@ namespace CivOne
                 int relY = moveTo.Y - unit.Y;
                 while (relX < -1) relX += 80;
                 while (relX > 1) relX -= 80;
-                if (unit is Diplomat && unit.Tile.City != null) return;
+                //if (unit is Diplomat && unit.Tile.City != null) return;
 
-                unit.MoveTo(relX, relY);
+                // fire-eggs 20190810 barbarian on ship, trying to land where other unit exists, result in infinite loop
+                if (!unit.MoveTo(relX, relY))
+                    unit.SkipTurn();
                 return;
             }
         }

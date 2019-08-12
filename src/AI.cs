@@ -19,7 +19,6 @@ using CivOne.Tiles;
 using CivOne.Units;
 
 // TODO fire-eggs consider replacing any scan of all units [GetUnits] with a subset of units [All units immediately surrounding x,y]
-// TODO fire-eggs verify that Distance(unit1,unit2) where they are neighbors has a value of 1!
 
 namespace CivOne
 {
@@ -95,18 +94,13 @@ namespace CivOne
                 return Improvement.Already;
 
             // TODO fire-eggs: SWY's "MiningShieldBonus" doesn't work here, need to understand it
-            if (tile is Hills)
+            if (tile.Type == Terrain.Hills)
                 return Improvement.Mine;
 
-            //bool usefulIrrigation = (tile is Grassland || tile is Plains || tile is Desert) && 
-            //                       tile.CrossTiles().Any(x => x.IsOcean || x is River || x.Irrigation);
-
-            bool canIrrigate = ((tile.GetBorderTiles().Any(t => (t.X == tile.X || t.Y == tile.Y) &&
-                                                                (t.City == null) &&
-                                                                (t.IsOcean || t.Irrigation || (t is River))))
-                                || (tile is River));
-            bool usefulIrrigation = (tile is Grassland || tile is Plains || tile is Desert) && canIrrigate;
-
+            bool usefulIrrigation = (tile is Grassland ||
+                                     tile.Type == Terrain.Plains ||
+                                     tile.Type == Terrain.Desert) && 
+                                    tile.AllowIrrigation();
 
             // TODO fire-eggs: SWY's "IrrigationFoodBonus" doesn't work here, need to understand it
             if (usefulIrrigation)
@@ -271,6 +265,7 @@ namespace CivOne
         private bool isBestDefenseInLocation(IUnit unit)
         {
             // Does this unit have the best defense value at it's current location?
+            // TODO fire-eggs implement!
             return false;
         }
 
@@ -327,10 +322,6 @@ namespace CivOne
             //}
         }
 
-        // Delta X/Y values for the 8 neighbor tiles - NOT the center
-        private static int[] deltaX = { -1, 0, +1, -1, +1, -1, 0, +1 };
-        private static int[] deltaY = { -1, -1, -1, 0, 0, +1, +1, +1 };
-
         private bool PillageCheck(IUnit unit, int distNearCity, byte nearCityOwner)
         {
             // DarkPanda ai_orders seg010_2192
@@ -382,22 +373,18 @@ namespace CivOne
 
             // seg010_29E7: neighbor loop
             int bestValue = int.MinValue;
-            int bestNeighborId = 0;
+            ITile bestNeighbor = null;
 
-            for (int neighborloop = 0; neighborloop < 8; neighborloop++)
+            foreach (var tile in unit.Tile.GetBorderTiles())
             {
-                // TODO map range check
-                int neighX = unit.X + deltaX[neighborloop];
-                int neighY = unit.Y + deltaY[neighborloop];
-
-                var tile = Game.Map[neighX, neighY];
                 if (tile.IsOcean)
                     continue; // ignore ocean tiles
 
-                int neighOwner = getOwner(neighX, neighY);
-                var neighUnits = Game.GetUnits(neighX, neighY);
-                bool neighOwnUnits = neighUnits.Length > 0 && neighUnits[0].Owner == unit.Owner;
-                bool neighEnemyUnits = neighUnits.Length > 0 && neighUnits[0].Owner != unit.Owner; // var_1C equivalent(?)
+                int neighOwner = getOwner(tile);
+                var neighUnits = tile.Units;
+                bool neighOwnUnits = neighUnits.Any(x => x.Owner == unit.Owner);
+                bool neighEnemyUnits = neighUnits.Any(x => x.Owner != unit.Owner); // var_1C equivalent?
+
 
                 // TODO seg010_2A7B: diplomat logic
 
@@ -436,7 +423,7 @@ namespace CivOne
                 {
                     // TODO state of war / diplomacy
                     // seg010_31C7: undefended enemy city, lets attack
-                    var neighCity = Game.GetCity(neighX, neighY);
+                    var neighCity = tile.City;
                     if (neighCity != null && neighCity.Owner != unit.Owner)
                         neighborValue = int.MaxValue;
 
@@ -448,18 +435,29 @@ namespace CivOne
                 // seg010_3209
                 if (!enemyUnitOrCityNearby)
                 {
-                    neighborValue += EvaluateNextTileOut(unit, neighX, neighY);
+                    neighborValue += EvaluateNextTileOut(unit, tile);
                 }
 
                 if (neighborValue > bestValue)
                 {
                     bestValue = neighborValue;
-                    bestNeighborId = neighborloop;
+                    bestNeighbor = tile;
                 }
 
             } // neighbor eval loop
 
-            if (!unit.MoveTo(deltaX[bestNeighborId], deltaY[bestNeighborId]))
+            int deltaX = 0;
+            int deltaY = 0;
+            if (bestNeighbor.X < unit.X)
+                deltaX = -1;
+            else if (bestNeighbor.X > unit.X)
+                deltaX = +1;
+            if (bestNeighbor.Y < unit.Y)
+                deltaY = -1;
+            else if (bestNeighbor.Y > unit.Y)
+                deltaY = +1;
+
+            if (!unit.MoveTo(deltaX, deltaY))
             {
                 unit.MovesLeft = 0; // TODO fire-eggs failed to move; make sure we don't try to move again; infinite loop
             }
@@ -469,36 +467,35 @@ namespace CivOne
 
         // There were no enemies or cities nearby. Look to the neighbors of the neighbor tile,
         // and return the DELTA impact on the value of the neighbor.
-        private int EvaluateNextTileOut(IUnit unit, int neighX, int neighY)
+        private int EvaluateNextTileOut(IUnit unit, ITile aTile)
         {
             int neighborValueDelta = 0;
 
             // TODO seg010_3212 : don't know what the purpose of seg029_1498[] is
 
             // seg010_329D : determine if the direction we're going is toward ocean or other units
-            for (int neighLoop2 = 0; neighLoop2 < 8; neighLoop2++)
+            foreach (var tile in aTile.GetBorderTiles())
             {
-                int nnx = neighX + deltaX[neighLoop2];
-                int nny = neighY + deltaY[neighLoop2];
-
                 // TODO validate within map range
+                if (tile == null)
+                    continue;
 
                 // TODO visibility seg010_32EC
 
-                if (CanSee(unit, nnx, nny))
+                if (CanSee(unit, tile))
                 {
-                    if (!Map[nnx, nny].IsOcean)
+                    if (!tile.IsOcean)
                         neighborValueDelta += 2;
                 }
 
-                if (Game.GetUnits(nnx, nny).Length > 0)
+                if (tile.Units.Length > 0)
                     neighborValueDelta -= 2;
             }
 
             return neighborValueDelta;
         }
 
-        private bool CanSee(IUnit unit, int x, int y)
+        private bool CanSee(IUnit unit, ITile atile)
         {
             // TODO is this 'explored' or 'currently visible'?
             // has this Civ seen a particular tile?
@@ -598,9 +595,8 @@ namespace CivOne
             return 1;
         }
 
-        private int getOwner(int x, int y)
+        private int getOwner(ITile tile)
         {
-            var tile = Map[x, y];
             // TODO owner NYI
             return 0;
         }
